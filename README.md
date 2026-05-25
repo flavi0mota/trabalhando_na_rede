@@ -1,4 +1,3 @@
-```
 # Cliente‑Servidor de Previsão de Fluxo de Rede com Random Forest
 
 Projeto acadêmico que implementa uma comunicação **cliente‑servidor pura via sockets TCP** entre um cliente escrito em C++ e um servidor Python que executa um modelo de Random Forest para previsão de fluxo de rede.  
