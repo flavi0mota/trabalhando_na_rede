@@ -84,16 +84,12 @@ fi
 
 ---
 
-## 📡 Funcionamento do protocolo
-
 1. **Cliente C++** coleta features (ex.: estatísticas de tráfego) e monta um JSON simples usando `simple_json.hpp`.
 2. O JSON é enviado via socket TCP precedido por um cabeçalho de 4 bytes com o tamanho do payload (big‑endian).
 3. **Servidor Python** recebe, decodifica, aplica o modelo Random Forest e responde com outro JSON (`{"prediction": valor}`).
 4. O cliente extrai o valor da previsão usando o parser próprio e o exibe.
 
 ---
-
-## 🧪 Testando diferentes previsões
 
 O vetor de features enviado pelo cliente está definido no `main.cpp`:
 ```cpp
