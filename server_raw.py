@@ -1,67 +1,137 @@
-# server_raw.py
+#!/usr/bin/env python3
+"""
+Servidor TCP bruto (socket + threading) para predição com Random Forest.
+Protocolo:
+  - Recebe 4 bytes (big-endian) com tamanho do JSON.
+  - JSON: {"features": [f1, f2, ...]}
+  - Responde 4 bytes + JSON {"prediction": int} ou {"error": "..."}
+"""
+
 import socket
 import struct
 import json
-import joblib
+import threading
+import logging
+import signal
+import sys
 import numpy as np
+import joblib
 
-# Carrega o modelo (ex.: Random Forest treinado)
-modelo = joblib.load('rf_model.pkl')
+# ------------------------------------------------------------
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
-HOST = '0.0.0.0'
-PORT = 51515
+# ------------------------------------------------------------
+# Variável global para o modelo (carregada no main)
+modelo = None
 
-def recvall(conn, n):
-    """Recebe exatamente n bytes."""
+
+def recv_exact(sock: socket.socket, n: int) -> bytes:
+    """Recebe exatamente n bytes de um socket, ou levanta exceção."""
     data = b''
     while len(data) < n:
-        packet = conn.recv(n - len(data))
-        if not packet:
-            return None
-        data += packet
+        try:
+            chunk = sock.recv(n - len(data))
+        except ConnectionResetError:
+            raise ConnectionError("Conexão resetada pelo cliente")
+        if not chunk:
+            raise ConnectionError("Conexão fechada pelo cliente")
+        data += chunk
     return data
 
-def handle_client(conn, addr):
-    print(f"Conexão de {addr}")
+
+def handle_client(conn: socket.socket, addr: tuple):
+    """Thread de atendimento a um cliente."""
+    logger.info(f"Nova conexão de {addr}")
     try:
-        raw_len = recvall(conn, 4)
-        if not raw_len: return
+        # 1. Lê o tamanho da mensagem (4 bytes big-endian)
+        raw_len = recv_exact(conn, 4)
         msg_len = struct.unpack('>I', raw_len)[0]
-        payload = recvall(conn, msg_len)
-        if not payload: return
+
+        # 2. Lê o payload JSON
+        payload = recv_exact(conn, msg_len)
         request = json.loads(payload.decode('utf-8'))
         features = request['features']
+        logger.info(f"Features recebidas de {addr}: {features}")
 
-        # DEBUG: mostre as features
-        print(f"Features recebidas: {features}")
-
-        entrada = np.array(features).reshape(1, -1)
+        # 3. Predição
+        entrada = np.array(features, dtype=np.float32).reshape(1, -1)
         pred = modelo.predict(entrada)[0]
 
-        # DEBUG: mostre a previsão e probabilidades
-        print(f"Previsão: {pred}")
+        # 4. Probabilidades (se disponível)
+        proba = None
         if hasattr(modelo, 'predict_proba'):
-            proba = modelo.predict_proba(entrada)
-            print(f"Probabilidades: {proba}")
+            proba = modelo.predict_proba(entrada)[0].tolist()
+            logger.info(f"Predição={pred}, Probabilidades={proba}")
 
+        # 5. Monta e envia resposta
         resposta = json.dumps({'prediction': int(pred)})
         resp_bytes = resposta.encode('utf-8')
         conn.sendall(struct.pack('>I', len(resp_bytes)) + resp_bytes)
+        logger.info(f"Resposta enviada para {addr}")
+
     except Exception as e:
-        print(f"Erro: {e}")
+        logger.error(f"Erro ao processar requisição de {addr}: {e}", exc_info=True)
+        # Tenta enviar uma resposta de erro (se a conexão ainda estiver viva)
+        try:
+            erro_msg = json.dumps({'error': str(e)}).encode('utf-8')
+            conn.sendall(struct.pack('>I', len(erro_msg)) + erro_msg)
+        except:
+            pass
     finally:
         conn.close()
+        logger.info(f"Conexão com {addr} encerrada")
+
 
 def main():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((HOST, PORT))
-        s.listen(5)
-        print(f"Servidor ouvindo em {HOST}:{PORT}...")
-        while True:
-            conn, addr = s.accept()
-            # Simplicidade: um cliente por vez. Para concorrência, usar threads ou select.
-            handle_client(conn, addr)
+    global modelo
+
+    # Carrega o modelo uma única vez
+    modelo = joblib.load('rf_model.pkl')
+    logger.info("Modelo carregado com sucesso.")
+
+    HOST = '0.0.0.0'
+    PORT = 51515
+
+    # Cria o socket servidor
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
+        # Permite reutilizar o endereço imediatamente
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        server_sock.bind((HOST, PORT))
+        server_sock.listen(5)
+        logger.info(f"Servidor ouvindo em {HOST}:{PORT} (socket + threading)")
+
+        # Tratamento gracioso de SIGINT (Ctrl+C)
+        shutdown_event = threading.Event()
+
+        def signal_handler(sig, frame):
+            logger.info("Sinal de encerramento recebido. Aguardando threads...")
+            shutdown_event.set()
+            server_sock.close()  # força saída do accept
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        while not shutdown_event.is_set():
+            try:
+                conn, addr = server_sock.accept()
+                # Cria uma thread daemon para o cliente
+                t = threading.Thread(target=handle_client, args=(conn, addr))
+                t.daemon = True
+                t.start()
+            except socket.error:
+                # Se o socket for fechado pelo signal handler, o accept falha
+                if shutdown_event.is_set():
+                    break
+                logger.error("Erro no accept", exc_info=True)
+
+        logger.info("Servidor finalizado.")
+
 
 if __name__ == '__main__':
     main()
