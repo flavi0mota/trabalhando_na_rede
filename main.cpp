@@ -36,7 +36,7 @@ int main() {
     inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
     if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "Erro na conexão com o servidor. O servidor Python está a correr?\n";
+        std::cerr << "Erro na conexão com o servidor.\n";
         return 1;
     }
     std::cout << "Conectado ao servidor\n";
@@ -89,7 +89,7 @@ int main() {
     std::cout << "Resposta bruta: " << resp_str << std::endl;
 
     if (resp_str.find("\"error\"") != std::string::npos) {
-        std::cerr << "O servidor retornou um erro estrutural!\n";
+        std::cerr << "O servidor retornou um erro estrutural\n";
     } else {
         try {
             int prediction = SimpleJson::parse_prediction(resp_str);

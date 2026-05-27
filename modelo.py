@@ -1,47 +1,37 @@
 import numpy as np
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 import joblib
 
 np.random.seed(42)
-n_amostras = 5000
+n_amtrs = 5000
 n_features = 5
 
-t = np.linspace(0, 4*np.pi, n_amostras)
-sinal = np.sin(t) + 0.3 * np.random.randn(n_amostras)   # sinal com ruído
-
-X = np.array([sinal[i:i+n_features] for i in range(n_amostras - n_features)])
-
+t = np.linspace(0, 4 * np.pi, n_amtrs)
+sinal = np.sin(t) + 0.3 * np.random.randn(n_amtrs)
+X = np.array([sinal[i:i + n_features] for i in range(n_amtrs - n_features)])
 y = (X.mean(axis=1) > 0.2).astype(int)
 
-# Split treino/teste
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-print(f"Treino: {X_train.shape}, Teste: {X_test.shape}")
-print(f"Distribuição das classes - Treino: {np.bincount(y_train)}, Teste: {np.bincount(y_test)}")
+print(f"treino: {X_train.shape} | Teste: {X_test.shape}")
+print(f"classe 0: {np.bincount(y_train)[0]} | Classe 1: {np.bincount(y_train)[1]}\n")
 
-# Modelo base
-rf_base = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-rf_base.fit(X_train, y_train)
-print(f"Acurácia base (treino): {rf_base.score(X_train, y_train):.4f}")
-print(f"Acurácia base (teste):  {rf_base.score(X_test, y_test):.4f}")
+modelo_cv = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+scrs = cross_val_score(modelo_cv, X_train, y_train, cv=skf, scoring='accuracy')
 
-# Busca de hiperparâmetros (opcional, pode ser pesada)
-param_grid = {
-    'n_estimators': [50, 100, 200],
-    'max_depth': [3, 5, 7, None],
-    'min_samples_split': [2, 5]
-}
-grid = GridSearchCV(RandomForestClassifier(random_state=42), param_grid,
-                    cv=3, scoring='accuracy', n_jobs=-1)
-grid.fit(X_train, y_train)
-print(f"Melhores parâmetros: {grid.best_params_}")
-print(f"Acurácia otimizada (teste): {accuracy_score(y_test, grid.predict(X_test)):.4f}")
+print(f"Folds: {np.round(scrs, 4)}")
+print(f"Media: {scrs.mean():.4f} +/- {scrs.std() * 2:.4f}\n")
 
-# Salva o modelo otimizado
-best_model = grid.best_estimator_
-joblib.dump(best_model, 'rf_model.pkl')
-print("Modelo otimizado salvo como rf_model.pkl")
+modelo_cv.fit(X_train, y_train)
+y_pred = modelo_cv.predict(X_test)
+
+print(f"Acuracia final: {accuracy_score(y_test, y_pred):.4f}")
+print(confusion_matrix(y_test, y_pred))
+print(classification_report(y_test, y_pred, target_names=['Classe 0', 'Classe 1']))
+
+joblib.dump(modelo_cv, 'rf_model.pkl')
